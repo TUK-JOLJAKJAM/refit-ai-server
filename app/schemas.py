@@ -1,27 +1,27 @@
+# app/schemas.py
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict
 
-# 1. 개별 동작 데이터 (데이터 시트의 변수들 반영)
+# --- 백엔드에서 받는 데이터 (Unity 센서 데이터) ---
 class ActionData(BaseModel):
-    action_type: int              # 동작 종류 (0: 전방굴곡, 1: 스쿼트 등)
-    action_dir: Optional[int] = 0 # 방향 (0: 상, 1: 하 등)
-    body_part: Optional[int] = 0  # 부위 (0: 양쪽, 1: 왼쪽 등)
-    duration: float               # 소요 시간
-    angle_max: float              # 최고 각도
-    speed_max: float              # 최고 속도
-    hold_time: Optional[float] = 0.0 # 버틴 시간 (몬스터타워용)
-    result: Optional[bool] = True    # 성공/이탈 여부
+    action_type: str    # 동작 종류 (예: Swing)
+    action_dir: str     # 동작 방향 (예: Forward, Backward)
+    duration: float     # 동작 지속 시간 (초)
+    angle_max: float    # 최대 가동 범위 (도)
+    speed_max: float    # 최대 속도
+    hold_time: float    # 버티기 시간 (초)
+    result: bool        # 게임 내 성공 여부
 
-# 2. 분석 요청 (백엔드 -> AI)
 class AnalysisRequest(BaseModel):
-    user_id: int
-    game_id: str                  # "Game_Shoulder_FireWood" 등
-    actions: List[ActionData]     # 수행한 동작 리스트
+    game_id: str
+    actions: List[ActionData]
 
-# 3. 분석 결과 (AI -> 백엔드)
+# --- AI 서버가 계산해서 돌려주는 결과 데이터 ---
 class AnalysisResponse(BaseModel):
-    score: int                    # 최종 점수
-    rom_achievement: float        # ROM 달성률 (%)
-    stability_score: int          # 안정성 점수
-    difficulty_recommend: str      # 차기 난이도 (UP, MAINTAIN, DOWN)
-    feedback_message: str         # 사용자 피드백 메시지
+    score: int                  # 최종 종합 점수
+    rom_achievement: float      # 가동 범위(ROM) 달성률 (%)
+    stability_score: int        # 동작의 정확도/안정성 점수 (%)
+    safety_status: str          # [추가] 안전 상태 (SAFE, WARNING)
+    difficulty_recommend: str   # 난이도 조절 추천 (UP, MAINTAIN, DOWN)
+    feedback_message: str       # 사용자 맞춤형 피드백 문구
+    stats: Optional[Dict] = None # [추가] 게임별 세부 통계 (Good 횟수, 위험 동작 횟수 등)
