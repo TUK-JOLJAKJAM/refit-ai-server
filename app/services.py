@@ -1,48 +1,40 @@
-# app/services.py (수정 버전)
-from typing import List
-from app.schemas import ActionData, AnalysisResponse
+# app/services.py
+from app.schemas import AnalysisRequest, AnalysisResponse
 from app.logic.shoulder import ShoulderLogic
-from app.utils import DataLogger  # 로거 추가
-
 
 class AnalysisService:
     @staticmethod
-    def analyze_movement(game_id: str, actions: List[ActionData]) -> AnalysisResponse:
-
-        # [추가] 테스트를 위해 들어온 데이터를 무조건 파일로 저장합니다.
-        DataLogger.save_to_csv(game_id, actions)
+    def analyze_movement(request: AnalysisRequest) -> AnalysisResponse:
+        """
+        요청받은 game_id에 따라 적절한 분석 로직을 매칭하고 결과를 반환합니다.
+        """
+        game_id = request.game_id
+        actions = request.actions
 
         # 1. 어깨 관련 게임 (장작패기)
         if game_id == "Game_Shoulder_FireWood":
+            # ShoulderLogic은 이미 최신 스키마 규격의 dict를 반환합니다.
             result = ShoulderLogic.analyze_firewood(actions)
 
-        # 2. 하체 관련 게임 (몬스터타워)
-        elif game_id == "Game_LowerBody_MonsterTower":
-            # 아직 로직 미구현 상태이므로 기본 결과 반환 (추후 구현 예정)
-            result = {
-                "score": 0, "rom_achievement": 0.0, "stability_score": 0,
-                "difficulty_recommend": "MAINTAIN", "feedback_message": "하체 분석 로직 준비 중입니다."
-            }
-
-        # 3. 손목 관련 게임 (별자리 그리기, 훈련 정리)
-        elif game_id in ["Game_Wrist_Constellation", "Game_Wrist_Arrangement"]:
-            result = {
-                "score": 0, "rom_achievement": 0.0, "stability_score": 0,
-                "difficulty_recommend": "MAINTAIN", "feedback_message": "손목 분석 로직 준비 중입니다."
-            }
-
-        # 4. 허리 관련 게임 (마을 지키기)
-        elif game_id == "Game_Waist_Intercept":
-            result = {
-                "score": 0, "rom_achievement": 0.0, "stability_score": 0,
-                "difficulty_recommend": "MAINTAIN", "feedback_message": "허리 분석 로직 준비 중입니다."
-            }
-
-        # 정의되지 않은 게임 ID 처리
+        # 2. 하체, 손목, 허리 등 미구현 게임들을 위한 기본 응답 구조
+        # 리액트 담당자가 차트에서 에러가 나지 않도록 빈 구조를 채워줍니다.
         else:
+            message = "분석 로직 준비 중입니다."
+            if game_id == "Game_LowerBody_MonsterTower":
+                message = "하체 분석 로직 준비 중입니다."
+            elif "Wrist" in game_id:
+                message = "손목 분석 로직 준비 중입니다."
+            elif "Waist" in game_id:
+                message = "허리 분석 로직 준비 중입니다."
+
             result = {
-                "score": 0, "rom_achievement": 0.0, "stability_score": 0,
-                "difficulty_recommend": "MAINTAIN", "feedback_message": "알 수 없는 게임 ID입니다."
+                "score": 0,
+                "safety_status": "SAFE",
+                "feedback_message": message,
+                "chart_data": {"가동범위(ROM)": 0, "동작정확도": 0, "안전성": 0},
+                "distribution_data": {"적정속도(Good)": 0, "너무빠름(Fast)": 0, "너무느림(Slow)": 0},
+                "difficulty_recommend": "MAINTAIN",
+                "stats": {"total_valid": 0}
             }
 
         # 딕셔너리 결과를 AnalysisResponse 객체로 변환하여 반환
