@@ -1,0 +1,5 @@
+echo "fastapi
+uvicorn
+numpy
+pandas
+pydantic" > requirements.txt
