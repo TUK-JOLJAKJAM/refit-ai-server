@@ -1,5 +1,5 @@
-echo "fastapi
+fastapi
 uvicorn
 numpy
 pandas
-pydantic" > requirements.txt
+pydantic
