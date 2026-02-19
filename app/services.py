@@ -1,20 +1,16 @@
-# app/services.py
+# app/services.py (수정 버전)
 from typing import List
 from app.schemas import ActionData, AnalysisResponse
 from app.logic.shoulder import ShoulderLogic
+from app.utils import DataLogger  # 로거 추가
 
-
-# 다른 로직 파일들도 순차적으로 구현 후 아래 주석을 해제할 예정입니다.
-# from app.logic.lower_body import LowerBodyLogic
-# from app.logic.wrist import WristLogic
-# from app.logic.waist import WaistLogic
 
 class AnalysisService:
     @staticmethod
     def analyze_movement(game_id: str, actions: List[ActionData]) -> AnalysisResponse:
-        """
-        데이터 시트의 game_id를 식별하여 각 부위별 분석 로직으로 연결합니다.
-        """
+
+        # [추가] 테스트를 위해 들어온 데이터를 무조건 파일로 저장합니다.
+        DataLogger.save_to_csv(game_id, actions)
 
         # 1. 어깨 관련 게임 (장작패기)
         if game_id == "Game_Shoulder_FireWood":
