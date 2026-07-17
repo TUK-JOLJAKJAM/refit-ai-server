@@ -62,10 +62,43 @@ def _coefficient_consistency(values: list[float]) -> float | None:
     return _clamp(100.0 * (1.0 - min(coefficient, 1.0)))
 
 
+def _normalize_quaternion(
+    value: tuple[float, float, float, float],
+) -> tuple[float, float, float, float] | None:
+    magnitude = math.sqrt(sum(component * component for component in value))
+    if magnitude <= 1e-9:
+        return None
+    return tuple(component / magnitude for component in value)
+
+
 def _quaternion_angle_deg(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> float:
-    dot = abs(sum(x * y for x, y in zip(a, b)))
+    normalized_a = _normalize_quaternion(a)
+    normalized_b = _normalize_quaternion(b)
+    if normalized_a is None or normalized_b is None:
+        return 0.0
+    dot = abs(sum(x * y for x, y in zip(normalized_a, normalized_b)))
     dot = max(-1.0, min(1.0, dot))
     return math.degrees(2.0 * math.acos(dot))
+
+
+def _sample_rom(action: ActionData) -> float | None:
+    angles = [float(sample.angle_deg) for sample in action.samples if sample.angle_deg is not None]
+    if len(angles) >= 2:
+        return max(angles) - min(angles)
+
+    quaternions = [
+        (float(sample.qx), float(sample.qy), float(sample.qz), float(sample.qw))
+        for sample in sorted(action.samples, key=lambda item: item.timestamp_ms)
+        if all(value is not None for value in (sample.qx, sample.qy, sample.qz, sample.qw))
+    ]
+    if len(quaternions) < 2:
+        return None
+    reference = quaternions[0]
+    return max(_quaternion_angle_deg(reference, current) for current in quaternions[1:])
+
+
+def _action_rom(action: ActionData) -> float | None:
+    return float(action.rom_deg) if action.rom_deg is not None else _sample_rom(action)
 
 
 def _sample_velocities(action: ActionData) -> list[tuple[int, float]]:
@@ -156,35 +189,48 @@ def _rest_ratio(session: SessionAnalysisInput) -> float | None:
 
 def _data_quality(session: SessionAnalysisInput) -> DataQuality:
     actions = session.actions
+    action_count = len(actions)
     flags = list(dict.fromkeys(session.normalization_flags))
     if not actions:
         flags.append("NO_ACTION_DATA")
     if 0 < len(actions) < 3:
         flags.append("INSUFFICIENT_ACTIONS")
 
-    has_result = any(action.result is not None or action.grade is not None for action in actions)
-    has_duration = any(action.duration_ms is not None for action in actions)
-    has_rom = any(action.rom_deg is not None for action in actions)
-    has_speed = any(
-        action.peak_angular_velocity_dps is not None or len(_sample_velocities(action)) >= 1
-        for action in actions
-    )
-    has_timestamps = any(
-        action.started_at_ms is not None and action.ended_at_ms is not None for action in actions
-    )
-    has_samples = any(len(action.samples) >= 2 for action in actions)
+    def coverage(predicate) -> float:
+        if not actions:
+            return 0.0
+        return sum(1 for action in actions if predicate(action)) / action_count
 
-    if actions and not has_rom:
+    coverage_values = {
+        "result": coverage(lambda action: action.result is not None or action.grade is not None),
+        "duration": coverage(lambda action: action.duration_ms is not None),
+        "rom": coverage(lambda action: _action_rom(action) is not None),
+        "speed": coverage(
+            lambda action: action.peak_angular_velocity_dps is not None
+            or len(_sample_velocities(action)) >= 1
+        ),
+        "timestamps": coverage(
+            lambda action: action.started_at_ms is not None and action.ended_at_ms is not None
+        ),
+        "samples": coverage(lambda action: len(action.samples) >= 3),
+    }
+    has_self_report = (
+        session.self_report.pain_before_0_10 is not None
+        or session.self_report.pain_after_0_10 is not None
+        or session.self_report.fatigue_after_0_10 is not None
+        or session.self_report.swelling is not None
+    )
+
+    if actions and coverage_values["rom"] < 0.8:
         flags.append("MISSING_ROM")
-    if actions and not has_speed:
+    if actions and coverage_values["speed"] < 0.8:
         flags.append("MISSING_SPEED")
-    if actions and not has_timestamps:
+    if actions and coverage_values["timestamps"] < 0.8:
         flags.append("MISSING_ACTION_TIMESTAMPS")
-    if actions and not has_samples:
+    if actions and coverage_values["samples"] < 0.6:
         flags.append("MISSING_SENSOR_SEQUENCE")
     if (
-        session.self_report.pain_after_0_10 is None
-        and session.self_report.fatigue_after_0_10 is None
+        not has_self_report
     ):
         flags.append("MISSING_SELF_REPORT")
 
@@ -193,15 +239,28 @@ def _data_quality(session: SessionAnalysisInput) -> DataQuality:
         flags.append("ACTION_COUNT_MISMATCH")
 
     completeness = (
-        (0.20 if actions else 0.0)
-        + (0.15 if has_result else 0.0)
-        + (0.15 if has_duration else 0.0)
-        + (0.20 if has_rom else 0.0)
-        + (0.15 if has_speed else 0.0)
-        + (0.10 if has_timestamps else 0.0)
-        + (0.05 if has_samples else 0.0)
+        (0.15 if actions else 0.0)
+        + (0.10 * coverage_values["result"])
+        + (0.10 * coverage_values["duration"])
+        + (0.20 * coverage_values["rom"])
+        + (0.15 * coverage_values["speed"])
+        + (0.10 * coverage_values["timestamps"])
+        + (0.15 * coverage_values["samples"])
+        + (0.05 if has_self_report else 0.0)
     )
-    if completeness >= 0.75:
+    assessable = bool(
+        len(actions) >= 3
+        and coverage_values["result"] >= 0.8
+        and coverage_values["duration"] >= 0.8
+        and coverage_values["rom"] >= 0.8
+        and coverage_values["speed"] >= 0.8
+        and coverage_values["timestamps"] >= 0.8
+        and coverage_values["samples"] >= 0.6
+    )
+    confidence = completeness * min(action_count / 5.0, 1.0)
+    if not assessable:
+        confidence = min(confidence, 0.70)
+    if assessable and completeness >= 0.75:
         status = DataQualityStatus.GOOD
     elif completeness >= 0.35 or total_from_counts:
         status = DataQualityStatus.PARTIAL
@@ -214,6 +273,9 @@ def _data_quality(session: SessionAnalysisInput) -> DataQuality:
         valid_action_count=len(actions),
         sensor_sample_count=sum(len(action.samples) for action in actions),
         flags=list(dict.fromkeys(flags)),
+        assessable=assessable,
+        confidence=round(confidence, 2),
+        coverage={key: round(value, 2) for key, value in coverage_values.items()},
     )
 
 
@@ -289,13 +351,24 @@ def _risks(
     return risks
 
 
-def _safety(risks: list[RiskFlag]) -> tuple[SafetyStatus, float]:
+def _safety(
+    session: SessionAnalysisInput,
+    risks: list[RiskFlag],
+    data_quality: DataQuality,
+) -> tuple[SafetyStatus, float]:
     penalty = {"HIGH": 35.0, "MEDIUM": 15.0, "INFO": 3.0}
     score = _clamp(100.0 - sum(penalty.get(risk.severity, 5.0) for risk in risks))
     if any(risk.severity == "HIGH" for risk in risks):
         return SafetyStatus.WARNING, score
     if any(risk.severity == "MEDIUM" for risk in risks):
         return SafetyStatus.CAUTION, score
+    has_self_report = (
+        session.self_report.pain_after_0_10 is not None
+        or session.self_report.fatigue_after_0_10 is not None
+        or session.self_report.swelling is not None
+    )
+    if not data_quality.assessable or not has_self_report:
+        return SafetyStatus.UNKNOWN, 50.0
     return SafetyStatus.SAFE, score
 
 
@@ -324,6 +397,9 @@ def _difficulty(
     elif fatigue is not None and fatigue >= 0.40:
         decision = DifficultyDecision.DOWN
         reasons.append("FATIGUE_HIGH")
+    elif not data_quality.assessable or safety_status == SafetyStatus.UNKNOWN:
+        decision = DifficultyDecision.MAINTAIN
+        reasons.append("DATA_QUALITY_LIMITED")
     elif (
         success_rate is not None
         and success_rate >= 0.85
@@ -355,12 +431,12 @@ def _difficulty(
 
 
 def _weighted_score(values: list[tuple[float | None, float]]) -> int:
-    available = [(value, weight) for value, weight in values if value is not None]
-    if not available:
+    # 누락 지표를 분모에서 제거하면 센서 데이터가 없어도 고득점이 되므로 0점 기여로 처리합니다.
+    total_weight = sum(weight for _, weight in values)
+    if total_weight <= 0:
         return 0
-    numerator = sum(float(value) * weight for value, weight in available)
-    denominator = sum(weight for _, weight in available)
-    return int(round(_clamp(numerator / denominator)))
+    weighted = sum(float(value or 0.0) * weight for value, weight in values)
+    return int(round(_clamp(weighted / total_weight)))
 
 
 def analyze_session(session: SessionAnalysisInput) -> AnalysisResponse:
@@ -381,10 +457,10 @@ def analyze_session(session: SessionAnalysisInput) -> AnalysisResponse:
     grade_scores = [score for action in actions if (score := _grade_score(action)) is not None]
     accuracy = _mean(grade_scores)
     durations = [action.duration_ms for action in actions if action.duration_ms is not None]
-    rom_values = [action.rom_deg for action in actions if action.rom_deg is not None]
+    rom_values = [rom for action in actions if (rom := _action_rom(action)) is not None]
     average_duration = _mean(durations)
     average_rom = _mean(rom_values)
-    rom_target = ROM_TARGET_DEG[session.primary_part.value]
+    rom_target = session.profile.target_rom_deg or ROM_TARGET_DEG[session.primary_part.value]
     rom_achievement = _clamp((average_rom / rom_target) * 100.0) if average_rom is not None else None
 
     duration_consistency = _coefficient_consistency([float(value) for value in durations])
@@ -397,7 +473,7 @@ def analyze_session(session: SessionAnalysisInput) -> AnalysisResponse:
     rest_ratio = _rest_ratio(session)
 
     risks = _risks(session, peak_speed, fatigue, data_quality)
-    safety_status, safety_score = _safety(risks)
+    safety_status, safety_score = _safety(session, risks, data_quality)
     recommendation = _difficulty(
         session,
         success_rate,
@@ -415,11 +491,16 @@ def analyze_session(session: SessionAnalysisInput) -> AnalysisResponse:
             (rom_achievement, 0.20),
             (consistency, 0.10),
             (smoothness, 0.05),
-            (safety_score, 0.10),
+            (safety_score if safety_status != SafetyStatus.UNKNOWN else None, 0.10),
         ]
     )
     if total <= 0:
         score = 0
+    elif not data_quality.assessable:
+        # 필수 센서 근거가 빠진 고득점은 확정 점수처럼 보이지 않도록 제한합니다.
+        score = min(score, 70)
+    if data_quality.status == DataQualityStatus.INSUFFICIENT:
+        score = min(score, 50)
 
     reason_codes = list(recommendation.reason_codes)
     coaching: list[str] = []
@@ -429,6 +510,9 @@ def analyze_session(session: SessionAnalysisInput) -> AnalysisResponse:
     elif data_quality.status == DataQualityStatus.INSUFFICIENT:
         feedback = "동작 데이터가 부족해 정확한 평가가 어렵습니다. 센서 기록을 확인해 주세요."
         coaching.append("다음 세션부터 동작별 각도, 속도, 시작·종료 시각을 함께 기록하세요.")
+    elif safety_status == SafetyStatus.UNKNOWN:
+        feedback = "수행 데이터는 확인했지만 통증 또는 센서 정보가 부족해 안전 판정은 보류했습니다."
+        coaching.append("다음 세션에서는 동작 전후 통증과 연속 센서 데이터를 함께 기록하세요.")
     elif recommendation.decision == DifficultyDecision.UP:
         feedback = "수행 정확도와 성공률이 안정적이어서 다음 난이도로 올릴 수 있습니다."
         coaching.append("현재 동작 범위와 속도를 유지하면서 한 단계 높은 난이도를 시도하세요.")
@@ -507,7 +591,9 @@ def analyze_session(session: SessionAnalysisInput) -> AnalysisResponse:
         distribution_data=grade_distribution,
         stats={
             "rom_target_deg": rom_target,
+            "rom_target_source": "PROFILE" if session.profile.target_rom_deg else "RULE_DEFAULT",
             "speed_caution_threshold_dps": PEAK_SPEED_CAUTION_DPS[session.primary_part.value],
             "raw_action_count": len(actions),
+            "assessable": data_quality.assessable,
         },
     )

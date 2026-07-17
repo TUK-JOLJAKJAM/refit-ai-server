@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 class BodyPart(str, Enum):
     SHOULDER = "SHOULDER"
+    BICEPS_BRACHII = "BICEPS_BRACHII"
     WAIST = "WAIST"
     WRIST = "WRIST"
     LEG = "LEG"
@@ -28,6 +29,7 @@ class DifficultyDecision(str, Enum):
 
 
 class SafetyStatus(str, Enum):
+    UNKNOWN = "UNKNOWN"
     SAFE = "SAFE"
     CAUTION = "CAUTION"
     WARNING = "WARNING"
@@ -56,6 +58,7 @@ class ActionData(BaseModel):
 
     action_id: str
     action_type: str = "UNKNOWN"
+    exercise_code: str = "UNKNOWN"
     direction: str = "UNKNOWN"
     started_at_ms: int | None = None
     ended_at_ms: int | None = None
@@ -70,6 +73,7 @@ class ActionData(BaseModel):
     mean_angular_velocity_dps: float | None = Field(default=None, ge=0)
     peak_angular_velocity_dps: float | None = Field(default=None, ge=0)
     hold_time_ms: float | None = Field(default=None, ge=0)
+    reaction_time_ms: float | None = Field(default=None, ge=0)
     samples: list[SensorSample] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -92,6 +96,8 @@ class UserContext(BaseModel):
     dominant_hand: str | None = None
     diagnosis_tags: list[str] = Field(default_factory=list)
     pain_baseline_0_10: int | None = Field(default=None, ge=0, le=10)
+    baseline_rom_deg: float | None = Field(default=None, ge=0, le=360)
+    target_rom_deg: float | None = Field(default=None, gt=0, le=360)
 
 
 class SelfReport(BaseModel):
@@ -145,6 +151,9 @@ class DataQuality(BaseModel):
     valid_action_count: int
     sensor_sample_count: int
     flags: list[str]
+    assessable: bool = False
+    confidence: float = Field(default=0, ge=0, le=1)
+    coverage: dict[str, float] = Field(default_factory=dict)
 
 
 class AnalysisMetrics(BaseModel):

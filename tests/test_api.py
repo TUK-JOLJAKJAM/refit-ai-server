@@ -50,3 +50,5 @@ def test_empty_payload_returns_low_confidence_result() -> None:
     body = response.json()
     assert body["score"] == 0
     assert body["data_quality"]["status"] == "INSUFFICIENT"
+    assert body["data_quality"]["assessable"] is False
+    assert body["safety_status"] == "UNKNOWN"
