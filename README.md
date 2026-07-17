@@ -2,6 +2,8 @@
 
 Unity 재활 게임 세션 또는 Spring `GameHistoryDetailResponse` JSON을 받아 수행도, ROM, 일관성, 피로 추세, 안전 신호와 다음 난이도를 분석하는 FastAPI 서버입니다.
 
+이 서비스는 머신러닝 분류기가 아니라 설명 가능한 **규칙 기반 분석 엔진**입니다. FastAPI는 분석 로직을 HTTP API로 제공하는 실행 프레임워크이며, 결과에는 사용한 규칙 버전(`analysis_version`)과 판정 근거 코드가 포함됩니다.
+
 ## 현재 지원 기능
 
 - 새 정형 세션 스키마와 현재 Unity/Spring 레거시 JSON 동시 지원
@@ -11,7 +13,8 @@ Unity 재활 게임 세션 또는 Spring `GameHistoryDetailResponse` JSON을 받
 - 통증, 부종, 과속, 수행도 급락 위험 플래그
 - 난이도 `UP`, `MAINTAIN`, `DOWN` 및 사유 코드
 - React 차트에 바로 사용할 `chart_data`, `distribution_data`
-- 데이터가 부족해도 실패하지 않고 품질 플래그로 표시
+- 액션별 결과·시간·ROM·속도·센서 커버리지와 표본 수 기반 신뢰도 계산
+- 데이터가 부족하면 `UNKNOWN`/`MAINTAIN`으로 보수적으로 판정하고 고득점을 제한
 
 > 현재 임계값은 제품 개발용 초기 규칙이며 의료 진단 기준이 아닙니다. 실제 센서 데이터와 재활 전문가 검토로 보정해야 합니다.
 
@@ -65,7 +68,7 @@ docker run --rm -p 8000:8000 refit-ai-server
 
 ```json
 {
-  "schema_version": "1.0",
+  "schema_version": "2.0",
   "history_id": "session-uuid",
   "game_id": "ADVENTURE_FIGHT",
   "primary_part": "SHOULDER",
@@ -75,13 +78,17 @@ docker run --rm -p 8000:8000 refit-ai-server
     {
       "action_id": "1",
       "action_type": "ATTACK",
+      "exercise_code": "SHOULDER_FLEXION",
       "direction": "FORWARD",
       "started_at_ms": 1784250001000,
       "ended_at_ms": 1784250002200,
       "result": true,
       "grade": "GOOD",
-      "rom_deg": 76.2,
-      "peak_angular_velocity_dps": 135.4
+      "samples": [
+        {"timestamp_ms": 1784250001000, "qx": 0, "qy": 0, "qz": 0, "qw": 1},
+        {"timestamp_ms": 1784250001300, "qx": 0, "qy": 0, "qz": 0.25, "qw": 0.968},
+        {"timestamp_ms": 1784250001600, "qx": 0, "qy": 0, "qz": 0.50, "qw": 0.866}
+      ]
     }
   ]
 }
@@ -98,6 +105,15 @@ docker run --rm -p 8000:8000 refit-ai-server
 ```
 
 이 형식에는 ROM과 속도가 없으므로 결과의 `data_quality.flags`에 `MISSING_ROM`, `MISSING_SPEED`가 표시됩니다.
+
+## 판정 가능 조건
+
+- 분석 동작 3회 이상
+- 결과, 동작시간, ROM, 속도, 시작·종료 시각 커버리지 각각 80% 이상
+- 연속 센서 샘플(동작당 3개 이상) 커버리지 60% 이상
+- 안전 `SAFE` 판정에는 위 조건과 운동 후 통증·피로·부종 중 하나 이상의 자가보고가 필요
+
+조건을 충족하지 않으면 수행 지표는 참고값으로 계산할 수 있지만 `assessable=false`, `safety_status=UNKNOWN`으로 반환합니다. 임계값은 `app/constants.py`에서 버전 관리하며 임상 진단을 대체하지 않습니다.
 
 ## 환경 변수
 

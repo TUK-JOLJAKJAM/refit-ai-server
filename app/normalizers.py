@@ -105,6 +105,9 @@ def _normalize_structured_action(raw: dict[str, Any], index: int) -> dict[str, A
     return {
         "action_id": str(_pick(raw, "action_id", "actionId", default=index + 1)),
         "action_type": str(_pick(raw, "action_type", "actionType", default="UNKNOWN")),
+        "exercise_code": str(
+            _pick(raw, "exercise_code", "exerciseCode", default="UNKNOWN")
+        ),
         "direction": str(
             _pick(raw, "direction", "action_dir", "actionDir", default="UNKNOWN")
         ),
@@ -126,6 +129,9 @@ def _normalize_structured_action(raw: dict[str, Any], index: int) -> dict[str, A
             _pick(raw, "peak_angular_velocity_dps", "peakAngularVelocityDps", "speed_max")
         ),
         "hold_time_ms": hold_time_ms,
+        "reaction_time_ms": _as_float(
+            _pick(raw, "reaction_time_ms", "reactionTimeMs")
+        ),
         "samples": samples,
     }
 
@@ -184,9 +190,8 @@ def _normalize_body_context(payload: dict[str, Any]) -> tuple[str, str, dict[str
         if not isinstance(item, dict):
             continue
         item_part = str(_pick(item, "body_part", "bodyPart", default="UNKNOWN")).upper()
-        if not selected or item_part == primary_part:
-            selected = item
         if item_part == primary_part:
+            selected = item
             break
     if selected:
         primary_part = str(_pick(selected, "body_part", "bodyPart", default=primary_part)).upper()
@@ -200,6 +205,18 @@ def normalize_request(payload: dict[str, Any]) -> SessionAnalysisInput:
     session_summary = _pick(payload, "session_summary", "sessionSummary", default={}) or {}
     profile_raw = _pick(payload, "profile", "userProfile", default={}) or {}
     self_report_raw = _pick(payload, "self_report", "selfReport", default={}) or {}
+    raw_body_metrics = body_summary.get("metrics", {}) if isinstance(body_summary, dict) else {}
+    body_metrics = raw_body_metrics if isinstance(raw_body_metrics, dict) else {}
+    difficulty = _as_int(
+        _pick(
+            payload,
+            "difficulty",
+            "difficultyLevel",
+            default=_pick(session_summary, "stageLevel", "stage_level"),
+        )
+    )
+    if difficulty is not None and not 1 <= difficulty <= 100:
+        difficulty = None
 
     pain_before = _as_int(
         _pick(
@@ -243,9 +260,11 @@ def normalize_request(payload: dict[str, Any]) -> SessionAnalysisInput:
         "game_id": str(_pick(payload, "game_id", "gameId", default="UNKNOWN_GAME")),
         "game_name": _pick(payload, "game_name", "gameName"),
         "game_version": _pick(payload, "game_version", "gameVersion"),
-        "primary_part": primary_part if primary_part in {"SHOULDER", "WAIST", "WRIST", "LEG"} else "UNKNOWN",
+        "primary_part": primary_part
+        if primary_part in {"SHOULDER", "BICEPS_BRACHII", "WAIST", "WRIST", "LEG"}
+        else "UNKNOWN",
         "side": side if side in {"L", "R", "BOTH", "NONE"} else "NONE",
-        "difficulty": _as_int(_pick(payload, "difficulty", "difficultyLevel")),
+        "difficulty": difficulty,
         "started_at_ms": _epoch_ms(_pick(payload, "started_at_ms", "startedAtMs"), flags),
         "ended_at_ms": _epoch_ms(_pick(payload, "ended_at_ms", "endedAtMs"), flags),
         "score": _as_int(payload.get("score")),
@@ -261,6 +280,27 @@ def normalize_request(payload: dict[str, Any]) -> SessionAnalysisInput:
             "diagnosis_tags": _pick(profile_raw, "diagnosis_tags", "diagnosisTags", default=[]) or [],
             "pain_baseline_0_10": _as_int(
                 _pick(profile_raw, "pain_baseline_0_10", "painBaseline0to10")
+            ),
+            "baseline_rom_deg": _as_float(
+                _pick(
+                    profile_raw,
+                    "baseline_rom_deg",
+                    "baselineRomDeg",
+                    default=_pick(body_metrics, "baseline_rom_deg", "baselineRomDeg"),
+                )
+            ),
+            "target_rom_deg": _as_float(
+                _pick(
+                    profile_raw,
+                    "target_rom_deg",
+                    "targetRomDeg",
+                    default=_pick(
+                        session_summary,
+                        "target_rom_deg",
+                        "targetRomDeg",
+                        default=_pick(body_metrics, "target_rom_deg", "targetRomDeg"),
+                    ),
+                )
             ),
         },
         "self_report": {
