@@ -1,14 +1,30 @@
-# app/constants.py
+ANALYSIS_VERSION = "rules-1.0.0"
 
-# --- 3.1 장작패기 (Unity 엔진 및 하드웨어 안전 기준 통합) ---
+# These are product-level starting thresholds, not medical diagnoses.
+# They must be calibrated with real sessions and a rehabilitation specialist.
+ROM_TARGET_DEG = {
+    "SHOULDER": 90.0,
+    "WAIST": 45.0,
+    "WRIST": 60.0,
+    "LEG": 90.0,
+    "UNKNOWN": 90.0,
+}
 
-# 1. 가동 범위 (AxeRotationController.cs 기반)
-FIREWOOD_ROM_GOAL = 81.0          # 유니티 도끼 회전 범위 (12 ~ -69도)
-FIREWOOD_MIN_ANGLE_THRESHOLD = 10.0  # 노이즈 필터링용 최소 각도
+PEAK_SPEED_CAUTION_DPS = {
+    "SHOULDER": 240.0,
+    "WAIST": 180.0,
+    "WRIST": 300.0,
+    "LEG": 220.0,
+    "UNKNOWN": 240.0,
+}
 
-# 2. 타이밍 기준 (ScoreManager.cs 기반)
-FIREWOOD_DURATION_FAST = 0.12     # 0.12초 미만은 너무 빠름 (Fast)
-FIREWOOD_DURATION_GOOD_MAX = 0.24 # 0.12~0.24초 사이가 재활에 최적인 Good 타이밍
+GRADE_SCORE = {
+    "PERFECT": 100.0,
+    "GOOD": 85.0,
+    "NORMAL": 70.0,
+    "BAD": 40.0,
+    "MISS": 0.0,
+}
 
-# 3. 안전 및 안정성 기준 (데이터 시트 기반)
-FIREWOOD_SPEED_LIMIT = 10.0       # 최대 속도가 10을 넘으면 부상 위험 경고
+MIN_ACTIONS_FOR_TREND = 4
+MIN_COMPLETENESS_FOR_UP = 0.55

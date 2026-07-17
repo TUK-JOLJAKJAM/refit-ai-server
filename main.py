@@ -1,47 +1,89 @@
-# main.py
-from fastapi import FastAPI, HTTPException
+from __future__ import annotations
+
+import logging
+import os
+from typing import Any
+
+from fastapi import Body, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from app.schemas import AnalysisRequest, AnalysisResponse
+from pydantic import ValidationError
+
+from app.demo import build_demo_session
+from app.schemas import AnalysisResponse
 from app.services import AnalysisService
-from app.utils import DataLogger  # 데이터 로그 저장을 위해 추가
-import uvicorn
+
+
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+logger = logging.getLogger("refit-ai-server")
 
 app = FastAPI(
     title="ReFit AI Analysis Server",
-    description="재활 게임 센서 데이터 분석을 위한 전용 AI 서버",
-    version="1.1.0"
+    description="재활 게임 세션의 수행도, 피로, 안전 신호와 난이도를 분석합니다.",
+    version="2.0.0",
 )
 
-# 1. CORS 설정: React와의 원활한 통신을 위해 반드시 필요합니다.
+allowed_origins = [
+    origin.strip()
+    for origin in os.getenv(
+        "CORS_ORIGINS",
+        "http://localhost:3000,http://127.0.0.1:3000,https://tuk-joljakjam.github.io",
+    ).split(",")
+    if origin.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
+    allow_origins=allowed_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
 
 @app.get("/")
-def health_check():
-    return {"status": "online", "message": "ReFit AI Server is running"}
+def root() -> dict[str, str]:
+    return {
+        "service": "refit-ai-server",
+        "status": "online",
+        "docs": "/docs",
+        "analysis_endpoint": "/api/v1/analyze_session",
+    }
 
 
-@app.post("/analyze", response_model=AnalysisResponse)
-async def analyze_rehab_data(request: AnalysisRequest):
+@app.get("/health")
+def health_check() -> dict[str, str]:
+    return {"status": "healthy", "version": app.version}
+
+
+@app.get("/api/v1/demo_session")
+def demo_session() -> dict[str, Any]:
+    return build_demo_session()
+
+
+def _run_analysis(payload: dict[str, Any]) -> AnalysisResponse:
     try:
-        # 2. [데이터 자산화] 분석 전 원본 데이터를 저장합니다.
-        # 이는 AI 담당자로서 추후 모델 고도화를 위한 핵심 데이터셋이 됩니다.
-        DataLogger.save_to_csv(request.game_id, request.actions)
+        return AnalysisService.analyze(payload)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors()) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Session analysis failed")
+        raise HTTPException(status_code=500, detail="분석 처리 중 서버 오류가 발생했습니다.") from exc
 
-        # 3. 분석 서비스 호출 (객체 전체를 전달하여 확장성 확보)
-        result = AnalysisService.analyze_movement(request)
-        return result
 
-    except Exception as e:
-        # 에러 발생 시 상세 내용을 로깅합니다.
-        print(f"Analysis Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+@app.post("/api/v1/analyze_session", response_model=AnalysisResponse)
+def analyze_session(payload: dict[str, Any] = Body(...)) -> AnalysisResponse:
+    """Analyze either the canonical ReFit schema or Spring GameHistory detail JSON."""
+    return _run_analysis(payload)
+
+
+@app.post("/analyze", response_model=AnalysisResponse, deprecated=True)
+def analyze_legacy(payload: dict[str, Any] = Body(...)) -> AnalysisResponse:
+    """Backward-compatible alias for the original endpoint."""
+    return _run_analysis(payload)
 
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    import uvicorn
+
+    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", "8000")), reload=True)
